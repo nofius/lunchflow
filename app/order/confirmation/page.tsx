@@ -179,10 +179,8 @@ function ConfirmationContent() {
                     <span className="font-medium text-zinc-900">{order.child_class}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-zinc-500">Meal</span>
-                    <span className="font-medium text-zinc-900">
-                      {order.menu_item_emoji} {order.menu_item_name}
-                    </span>
+                    <span className="text-zinc-500">Days</span>
+                    <span className="font-medium text-zinc-900">{order.days_ordered} days</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-zinc-500">Amount</span>
@@ -218,7 +216,7 @@ function ConfirmationContent() {
 
         <div className="mt-6 rounded-lg border border-blue-100 bg-blue-50 p-4 text-sm text-blue-800">
           {orders.length === 1
-            ? `Your child should show their QR code at the canteen each lunch day. The same QR code is valid for the entire month of ${monthName}.`
+            ? `Your child should show their QR code at the canteen each lunch day. The same QR code is valid for the entire month of ${monthName}. Each day's meal is chosen based on your selections.`
             : `Each child has their own QR code. They should show it at the canteen each lunch day. The codes are valid for the entire month of ${monthName}.`}
         </div>
 

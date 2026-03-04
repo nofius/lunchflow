@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'crypto'
-import { getOrderById, markCollected, appendCollectionLog } from '@/lib/sheets'
+import { getOrderById, getOrderDayForDate, markDayCollected, appendCollectionLog } from '@/lib/sheets'
+import { getToday } from '@/lib/constants'
 import type { CollectApiResponse, CollectionLog } from '@/types'
 
 function makeLogId(): string {
@@ -8,7 +9,9 @@ function makeLogId(): string {
 }
 
 export async function POST(req: NextRequest) {
-  const { order_id, staff_id, manual } = await req.json()
+  const { order_id, date, staff_id, manual } = await req.json()
+
+  const collectDate = date || getToday()
 
   const order = await getOrderById(order_id)
   if (!order || order.payment_status !== 'paid') {
@@ -18,14 +21,22 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  if (order.collected) {
+  const daySelection = await getOrderDayForDate(order_id, collectDate)
+  if (!daySelection) {
+    return NextResponse.json(
+      { success: false, error: 'No meal ordered for this date' } satisfies CollectApiResponse,
+      { status: 404 }
+    )
+  }
+
+  if (daySelection.collected) {
     return NextResponse.json(
       { success: false, error: 'Already collected' } satisfies CollectApiResponse,
       { status: 409 }
     )
   }
 
-  await markCollected(order_id, staff_id)
+  await markDayCollected(order_id, collectDate, staff_id)
 
   await appendCollectionLog({
     log_id: makeLogId(),
@@ -36,7 +47,7 @@ export async function POST(req: NextRequest) {
       : '',
     child_name: order.child_name,
     child_class: order.child_class,
-    menu_item_name: order.menu_item_name,
+    menu_item_name: daySelection.item_name,
     result: manual ? 'collected_manual' : 'collected',
     staff_id,
   } satisfies CollectionLog)

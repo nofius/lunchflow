@@ -1,5 +1,13 @@
 import { google } from 'googleapis'
-import type { Order, MenuItem, CollectionLog, Lane, PaymentStatus } from '@/types'
+import type {
+  Order,
+  MenuItem,
+  MenuScheduleDay,
+  OrderDaySelection,
+  CollectionLog,
+  Lane,
+  PaymentStatus,
+} from '@/types'
 
 // ─── Google Sheets Auth ──────────────────────────────────────────────────────
 
@@ -22,15 +30,33 @@ const SPREADSHEET_ID = process.env.GOOGLE_SHEETS_ID!
 // ─── Sheet Names ─────────────────────────────────────────────────────────────
 
 const SHEET_ORDERS = 'orders'
-const SHEET_MENU = 'menu'
+const SHEET_MENU_ITEMS = 'menu_items'
+const SHEET_MENU_SCHEDULE = 'menu_schedule'
+const SHEET_ORDER_DAYS = 'order_days'
 const SHEET_COLLECTION_LOG = 'collection_log'
 
 // ─── Row <-> Object Mapping ─────────────────────────────────────────────────
 
-/**
- * Maps a row from the orders sheet to an Order object.
- * Column order must match DATAMODEL.md exactly.
+/*
+ * orders sheet columns (A–N):
+ * A: order_id
+ * B: qr_token
+ * C: child_name
+ * D: child_class
+ * E: parent_name
+ * F: parent_email
+ * G: parent_phone
+ * H: menu_month
+ * I: days_ordered
+ * J: amount_hkd
+ * K: payment_status
+ * L: kpay_reference
+ * M: order_created_at
+ * N: payment_confirmed_at
+ * O: email_sent
+ * P: notes
  */
+
 function rowToOrder(row: string[]): Order {
   return {
     order_id: row[0] || '',
@@ -41,26 +67,18 @@ function rowToOrder(row: string[]): Order {
     parent_email: row[5] || '',
     parent_phone: row[6] || undefined,
     menu_month: row[7] || '',
-    menu_item_id: row[8] || '',
-    menu_item_name: row[9] || '',
-    menu_item_emoji: row[10] || '',
-    lane: (row[11] || 'A') as Lane,
-    amount_hkd: Number(row[12]) || 0,
-    payment_status: (row[13] || 'pending') as PaymentStatus,
-    kpay_reference: row[14] || undefined,
-    order_created_at: row[15] || '',
-    payment_confirmed_at: row[16] || undefined,
-    email_sent: row[17] === 'TRUE',
-    collected: row[18] === 'TRUE',
-    collected_at: row[19] || undefined,
-    collected_by: row[20] || undefined,
-    notes: row[21] || undefined,
+    days_ordered: Number(row[8]) || 0,
+    amount_hkd: Number(row[9]) || 0,
+    payment_status: (row[10] || 'pending') as PaymentStatus,
+    kpay_reference: row[11] || undefined,
+    order_created_at: row[12] || '',
+    payment_confirmed_at: row[13] || undefined,
+    email_sent: row[14] === 'TRUE',
+    collected_today: false, // derived at runtime, not stored
+    notes: row[15] || undefined,
   }
 }
 
-/**
- * Maps an Order object to a row array for the orders sheet.
- */
 function orderToRow(order: Order): string[] {
   return [
     order.order_id,
@@ -71,45 +89,82 @@ function orderToRow(order: Order): string[] {
     order.parent_email,
     order.parent_phone || '',
     order.menu_month,
-    order.menu_item_id,
-    order.menu_item_name,
-    order.menu_item_emoji || '',
-    order.lane,
+    String(order.days_ordered),
     String(order.amount_hkd),
     order.payment_status,
     order.kpay_reference || '',
     order.order_created_at,
     order.payment_confirmed_at || '',
     order.email_sent ? 'TRUE' : 'FALSE',
-    order.collected ? 'TRUE' : 'FALSE',
-    order.collected_at || '',
-    order.collected_by || '',
     order.notes || '',
   ]
 }
 
-/**
- * Maps a row from the menu sheet to a MenuItem object.
+/*
+ * menu_items sheet columns (A–F):
+ * A: item_id, B: item_name, C: description, D: emoji, E: lane, F: is_active
  */
+
 function rowToMenuItem(row: string[]): MenuItem {
   return {
     item_id: row[0] || '',
-    menu_month: row[1] || '',
-    item_name: row[2] || '',
-    description: row[3] || '',
-    emoji: row[4] || '',
-    lane: (row[5] || 'A') as Lane,
-    price_hkd: Number(row[6]) || 0,
-    days_in_month: Number(row[7]) || 0,
-    total_price_hkd: Number(row[8]) || 0,
-    is_active: row[9] === 'TRUE',
-    max_orders: Number(row[10]) || 0,
+    item_name: row[1] || '',
+    description: row[2] || '',
+    emoji: row[3] || '',
+    lane: (row[4] || 'A') as Lane,
+    is_active: row[5] === 'TRUE',
   }
 }
 
-/**
- * Maps a CollectionLog object to a row array.
+/*
+ * menu_schedule sheet columns (A–E):
+ * A: date (YYYY-MM-DD), B: item_id, C: item_name, D: emoji, E: lane
  */
+
+function rowToMenuScheduleDay(row: string[]): MenuScheduleDay {
+  return {
+    date: row[0] || '',
+    item_id: row[1] || '',
+    item_name: row[2] || '',
+    emoji: row[3] || '',
+    lane: (row[4] || 'A') as Lane,
+  }
+}
+
+/*
+ * order_days sheet columns (A–I):
+ * A: order_id, B: date, C: item_id, D: item_name, E: emoji,
+ * F: lane, G: collected, H: collected_at, I: collected_by
+ */
+
+function rowToOrderDay(row: string[]): OrderDaySelection {
+  return {
+    order_id: row[0] || '',
+    date: row[1] || '',
+    item_id: row[2] || '',
+    item_name: row[3] || '',
+    emoji: row[4] || '',
+    lane: (row[5] || 'A') as Lane,
+    collected: row[6] === 'TRUE',
+    collected_at: row[7] || undefined,
+    collected_by: row[8] || undefined,
+  }
+}
+
+function orderDayToRow(d: OrderDaySelection): string[] {
+  return [
+    d.order_id,
+    d.date,
+    d.item_id,
+    d.item_name,
+    d.emoji,
+    d.lane,
+    d.collected ? 'TRUE' : 'FALSE',
+    d.collected_at || '',
+    d.collected_by || '',
+  ]
+}
+
 function collectionLogToRow(log: CollectionLog): string[] {
   return [
     log.log_id,
@@ -127,30 +182,22 @@ function collectionLogToRow(log: CollectionLog): string[] {
 
 // ─── Orders Functions ────────────────────────────────────────────────────────
 
-/**
- * Fetch all orders for a given month.
- */
 export async function getOrders(month: string): Promise<Order[]> {
   const sheets = getSheets()
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
-    range: `${SHEET_ORDERS}!A2:V`,
+    range: `${SHEET_ORDERS}!A2:P`,
   })
 
   const rows = res.data.values || []
-  return rows
-    .map(row => rowToOrder(row))
-    .filter(order => order.menu_month === month)
+  return rows.map(row => rowToOrder(row)).filter(order => order.menu_month === month)
 }
 
-/**
- * Look up a single order by its QR token.
- */
 export async function getOrderByToken(token: string): Promise<Order | null> {
   const sheets = getSheets()
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
-    range: `${SHEET_ORDERS}!A2:V`,
+    range: `${SHEET_ORDERS}!A2:P`,
   })
 
   const rows = res.data.values || []
@@ -158,10 +205,6 @@ export async function getOrderByToken(token: string): Promise<Order | null> {
   return row ? rowToOrder(row) : null
 }
 
-/**
- * Look up an order by child name, class, and month.
- * Only returns paid orders (pending orders older than 30 min are ignored).
- */
 export async function getOrderByChild(
   name: string,
   cls: string,
@@ -170,7 +213,7 @@ export async function getOrderByChild(
   const sheets = getSheets()
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
-    range: `${SHEET_ORDERS}!A2:V`,
+    range: `${SHEET_ORDERS}!A2:P`,
   })
 
   const rows = res.data.values || []
@@ -183,30 +226,18 @@ export async function getOrderByChild(
       order.child_class.toLowerCase() === cls.toLowerCase() &&
       order.menu_month === month
     ) {
-      // Return paid orders immediately
-      if (order.payment_status === 'paid') {
-        return order
-      }
-      // Return pending orders only if created within the last 30 minutes
-      if (
-        order.payment_status === 'pending' &&
-        order.order_created_at > thirtyMinAgo
-      ) {
-        return order
-      }
+      if (order.payment_status === 'paid') return order
+      if (order.payment_status === 'pending' && order.order_created_at > thirtyMinAgo) return order
     }
   }
   return null
 }
 
-/**
- * Look up a single order by order ID.
- */
 export async function getOrderById(orderId: string): Promise<Order | null> {
   const sheets = getSheets()
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
-    range: `${SHEET_ORDERS}!A2:V`,
+    range: `${SHEET_ORDERS}!A2:P`,
   })
 
   const rows = res.data.values || []
@@ -214,42 +245,147 @@ export async function getOrderById(orderId: string): Promise<Order | null> {
   return row ? rowToOrder(row) : null
 }
 
-/**
- * Append a new order to the orders sheet.
- */
 export async function appendOrder(order: Order): Promise<void> {
   const sheets = getSheets()
   await sheets.spreadsheets.values.append({
     spreadsheetId: SPREADSHEET_ID,
-    range: `${SHEET_ORDERS}!A:V`,
+    range: `${SHEET_ORDERS}!A:P`,
     valueInputOption: 'USER_ENTERED',
-    requestBody: {
-      values: [orderToRow(order)],
-    },
+    requestBody: { values: [orderToRow(order)] },
   })
 }
 
-/**
- * Mark an order as collected by updating the row in-place.
- */
-export async function markCollected(
+export async function updateOrder(
   orderId: string,
-  staffId: string
+  updates: Partial<Order>
 ): Promise<void> {
   const sheets = getSheets()
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
-    range: `${SHEET_ORDERS}!A2:V`,
+    range: `${SHEET_ORDERS}!A2:P`,
   })
 
   const rows = res.data.values || []
   const rowIndex = rows.findIndex(r => r[0] === orderId)
 
-  if (rowIndex === -1) {
-    throw new Error(`Order not found: ${orderId}`)
-  }
+  if (rowIndex === -1) throw new Error(`Order not found: ${orderId}`)
 
-  // Row index in the sheet is rowIndex + 2 (1-indexed + header row)
+  const sheetRow = rowIndex + 2
+  const existing = rowToOrder(rows[rowIndex])
+  const updated = { ...existing, ...updates }
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${SHEET_ORDERS}!A${sheetRow}:P${sheetRow}`,
+    valueInputOption: 'USER_ENTERED',
+    requestBody: { values: [orderToRow(updated)] },
+  })
+}
+
+// ─── Menu Functions ──────────────────────────────────────────────────────────
+
+/**
+ * Fetch the active meal catalog (menu_items sheet).
+ */
+export async function getMenuItems(): Promise<MenuItem[]> {
+  const sheets = getSheets()
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${SHEET_MENU_ITEMS}!A2:F`,
+  })
+
+  const rows = res.data.values || []
+  return rows.map(row => rowToMenuItem(row)).filter(item => item.is_active)
+}
+
+/**
+ * Fetch the daily menu schedule for a given month.
+ * Returns rows sorted by date, each row = one available item on that date.
+ */
+export async function getMenuSchedule(month: string): Promise<MenuScheduleDay[]> {
+  const sheets = getSheets()
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${SHEET_MENU_SCHEDULE}!A2:E`,
+  })
+
+  const rows = res.data.values || []
+  return rows
+    .map(row => rowToMenuScheduleDay(row))
+    .filter(row => row.date.startsWith(month))
+    .sort((a, b) => a.date.localeCompare(b.date))
+}
+
+// ─── Order Days Functions ────────────────────────────────────────────────────
+
+/**
+ * Append daily meal selections for an order.
+ */
+export async function appendOrderDays(days: OrderDaySelection[]): Promise<void> {
+  if (days.length === 0) return
+  const sheets = getSheets()
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${SHEET_ORDER_DAYS}!A:I`,
+    valueInputOption: 'USER_ENTERED',
+    requestBody: { values: days.map(d => orderDayToRow(d)) },
+  })
+}
+
+/**
+ * Get all daily selections for an order.
+ */
+export async function getOrderDays(orderId: string): Promise<OrderDaySelection[]> {
+  const sheets = getSheets()
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${SHEET_ORDER_DAYS}!A2:I`,
+  })
+
+  const rows = res.data.values || []
+  return rows
+    .map(row => rowToOrderDay(row))
+    .filter(d => d.order_id === orderId)
+    .sort((a, b) => a.date.localeCompare(b.date))
+}
+
+/**
+ * Get a specific day's selection for an order.
+ */
+export async function getOrderDayForDate(
+  orderId: string,
+  date: string
+): Promise<OrderDaySelection | null> {
+  const sheets = getSheets()
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${SHEET_ORDER_DAYS}!A2:I`,
+  })
+
+  const rows = res.data.values || []
+  const row = rows.find(r => r[0] === orderId && r[1] === date)
+  return row ? rowToOrderDay(row) : null
+}
+
+/**
+ * Mark a specific day's meal as collected in the order_days sheet.
+ */
+export async function markDayCollected(
+  orderId: string,
+  date: string,
+  staffId: string
+): Promise<void> {
+  const sheets = getSheets()
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${SHEET_ORDER_DAYS}!A2:I`,
+  })
+
+  const rows = res.data.values || []
+  const rowIndex = rows.findIndex(r => r[0] === orderId && r[1] === date)
+
+  if (rowIndex === -1) throw new Error(`Order day not found: ${orderId} / ${date}`)
+
   const sheetRow = rowIndex + 2
   const now = new Date().toISOString()
 
@@ -258,100 +394,28 @@ export async function markCollected(
     requestBody: {
       valueInputOption: 'USER_ENTERED',
       data: [
-        {
-          range: `${SHEET_ORDERS}!S${sheetRow}`,
-          values: [['TRUE']],
-        },
-        {
-          range: `${SHEET_ORDERS}!T${sheetRow}`,
-          values: [[now]],
-        },
-        {
-          range: `${SHEET_ORDERS}!U${sheetRow}`,
-          values: [[staffId]],
-        },
+        { range: `${SHEET_ORDER_DAYS}!G${sheetRow}`, values: [['TRUE']] },
+        { range: `${SHEET_ORDER_DAYS}!H${sheetRow}`, values: [[now]] },
+        { range: `${SHEET_ORDER_DAYS}!I${sheetRow}`, values: [[staffId]] },
       ],
     },
   })
 }
 
-/**
- * Update specific fields of an order by order ID.
- * Used by the webhook to set payment_status, kpay_reference, qr_token, etc.
- */
-export async function updateOrder(
-  orderId: string,
-  updates: Partial<Order>
-): Promise<void> {
-  const sheets = getSheets()
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_ID,
-    range: `${SHEET_ORDERS}!A2:V`,
-  })
-
-  const rows = res.data.values || []
-  const rowIndex = rows.findIndex(r => r[0] === orderId)
-
-  if (rowIndex === -1) {
-    throw new Error(`Order not found: ${orderId}`)
-  }
-
-  const sheetRow = rowIndex + 2
-  const existing = rowToOrder(rows[rowIndex])
-  const updated = { ...existing, ...updates }
-  const updatedRow = orderToRow(updated)
-
-  await sheets.spreadsheets.values.update({
-    spreadsheetId: SPREADSHEET_ID,
-    range: `${SHEET_ORDERS}!A${sheetRow}:V${sheetRow}`,
-    valueInputOption: 'USER_ENTERED',
-    requestBody: {
-      values: [updatedRow],
-    },
-  })
-}
-
-// ─── Menu Functions ──────────────────────────────────────────────────────────
-
-/**
- * Fetch active menu items for a given month.
- */
-export async function getMenu(month: string): Promise<MenuItem[]> {
-  const sheets = getSheets()
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_ID,
-    range: `${SHEET_MENU}!A2:K`,
-  })
-
-  const rows = res.data.values || []
-  return rows
-    .map(row => rowToMenuItem(row))
-    .filter(item => item.menu_month === month && item.is_active)
-}
-
 // ─── Collection Log Functions ────────────────────────────────────────────────
 
-/**
- * Append an entry to the collection log sheet.
- */
 export async function appendCollectionLog(log: CollectionLog): Promise<void> {
   const sheets = getSheets()
   await sheets.spreadsheets.values.append({
     spreadsheetId: SPREADSHEET_ID,
     range: `${SHEET_COLLECTION_LOG}!A:J`,
     valueInputOption: 'USER_ENTERED',
-    requestBody: {
-      values: [collectionLogToRow(log)],
-    },
+    requestBody: { values: [collectionLogToRow(log)] },
   })
 }
 
 // ─── Utility Functions ───────────────────────────────────────────────────────
 
-/**
- * Generate the next sequential order ID for a given month.
- * Format: ORD-YYYY-MM-NNNNN
- */
 export async function getNextOrderId(month: string): Promise<string> {
   const orders = await getOrders(month)
   const prefix = `ORD-${month}-`

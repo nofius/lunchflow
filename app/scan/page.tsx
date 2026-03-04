@@ -4,7 +4,7 @@ import { useState, useCallback, useEffect, useRef } from 'react'
 import dynamic from 'next/dynamic'
 import ScanResult from '@/components/ScanResult'
 import ManualLookup from '@/components/ManualLookup'
-import type { ScanApiResponse, MenuItem } from '@/types'
+import type { ScanApiResponse, MenuScheduleDay, Lane } from '@/types'
 
 // html5-qrcode accesses `window` so it must be client-only
 const QRScanner = dynamic(() => import('@/components/QRScanner'), { ssr: false })
@@ -17,23 +17,27 @@ export default function ScanPage() {
   const [scanning, setScanning] = useState(true)
   const [collecting, setCollecting] = useState(false)
   const [manualOpen, setManualOpen] = useState(false)
-  const [lanes, setLanes] = useState<Pick<MenuItem, 'lane' | 'item_name' | 'emoji'>[]>([])
+  const [lanes, setLanes] = useState<{ lane: Lane; item_name: string; emoji: string }[]>([])
   const resetTimer = useRef<ReturnType<typeof setTimeout>>(null)
 
-  // Fetch today's lane info
+  // Fetch today's lane info from the daily schedule
   useEffect(() => {
     const month = new Date().toISOString().slice(0, 7) // YYYY-MM
+    const today = new Date().toISOString().slice(0, 10) // YYYY-MM-DD
     fetch(`/api/menu?month=${month}`)
       .then((r) => r.json())
       .then((data) => {
-        if (data.items) {
-          setLanes(
-            data.items.map((i: MenuItem) => ({
-              lane: i.lane,
-              item_name: i.item_name,
-              emoji: i.emoji,
-            }))
-          )
+        if (data.days) {
+          const todayMenu = data.days.find((d: { date: string }) => d.date === today)
+          if (todayMenu) {
+            setLanes(
+              todayMenu.items.map((i: MenuScheduleDay) => ({
+                lane: i.lane,
+                item_name: i.item_name,
+                emoji: i.emoji,
+              }))
+            )
+          }
         }
       })
       .catch(() => {})
@@ -82,7 +86,7 @@ export default function ScanPage() {
         await fetch('/api/collect', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ order_id: orderId, staff_id: STAFF_ID }),
+          body: JSON.stringify({ order_id: orderId, date: new Date().toISOString().slice(0, 10), staff_id: STAFF_ID }),
         })
       } catch {
         // Proceed anyway — the scan was already logged

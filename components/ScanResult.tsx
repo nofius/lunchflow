@@ -79,6 +79,26 @@ export default function ScanResult({ data, onCollect, onNext, collecting }: Scan
     )
   }
 
+  if (data.result === 'no_meal_today') {
+    return (
+      <div className="rounded-2xl border-4 border-orange-400 bg-white p-6 text-center shadow-lg">
+        <p className="text-4xl">&#128276;</p>
+        <h2 className="mt-2 text-2xl font-bold text-zinc-900">{data.child_name}</h2>
+        <p className="text-lg text-zinc-500">{data.child_class}</p>
+        <p className="mt-2 text-base text-orange-600">No meal ordered for today</p>
+        <div className="mt-6">
+          <button
+            type="button"
+            onClick={onNext}
+            className="rounded-xl border border-zinc-300 px-6 py-3 text-lg font-medium text-zinc-600 transition-colors hover:bg-zinc-50"
+          >
+            Next student
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   if (data.result === 'wrong_month') {
     return (
       <div className="rounded-2xl border-4 border-red-400 bg-white p-6 text-center shadow-lg">

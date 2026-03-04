@@ -1,4 +1,5 @@
 export const ORDERING_CUTOFF_DAY = 25
+export const PRICE_PER_DAY = Number(process.env.PRICE_PER_DAY) || 35
 export const STAFF_KEY = process.env.STAFF_KEY!
 
 /**
@@ -42,4 +43,15 @@ export function getCurrentMonth(): string {
 export function isOrderingOpen(): boolean {
   const now = new Date()
   return now.getDate() <= ORDERING_CUTOFF_DAY
+}
+
+/**
+ * Returns today's date as YYYY-MM-DD (for scanner daily lookups).
+ */
+export function getToday(): string {
+  const now = new Date()
+  const y = now.getFullYear()
+  const m = String(now.getMonth() + 1).padStart(2, '0')
+  const d = String(now.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
 }

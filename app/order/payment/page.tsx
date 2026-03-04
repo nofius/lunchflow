@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import type { MenuItem } from '@/types'
+import type { MenuScheduleDay } from '@/types'
 
 interface ChildEntry {
   name: string
@@ -19,19 +19,22 @@ interface OrderSession {
 
 interface SessionData {
   order: OrderSession
-  selections: Record<number, MenuItem>
+  selectionDetails: Record<number, { date: string; item: MenuScheduleDay }[]>
+  pricePerDay: number
   month: string
 }
 
 function getSessionData(): SessionData | null {
   if (typeof window === 'undefined') return null
   const rawOrder = sessionStorage.getItem('lunchflow_order')
-  const rawSel = sessionStorage.getItem('lunchflow_selections')
+  const rawDetails = sessionStorage.getItem('lunchflow_selection_details')
+  const priceStr = sessionStorage.getItem('lunchflow_price_per_day')
   const month = sessionStorage.getItem('lunchflow_month')
-  if (!rawOrder || !rawSel || !month) return null
+  if (!rawOrder || !rawDetails || !month) return null
   return {
     order: JSON.parse(rawOrder),
-    selections: JSON.parse(rawSel),
+    selectionDetails: JSON.parse(rawDetails),
+    pricePerDay: Number(priceStr) || 0,
     month,
   }
 }
@@ -53,19 +56,19 @@ function PaymentContent() {
   }, [router, session])
 
   const order = session?.order ?? null
-  const selections = session?.selections ?? {}
+  const details = session?.selectionDetails ?? {}
+  const pricePerDay = session?.pricePerDay ?? 0
   const month = session?.month ?? ''
   const children = order?.children ?? []
 
   // Build line items: one per child
-  const lineItems = children.map((child, i) => ({
-    child,
-    item: selections[i] as MenuItem | undefined,
-  }))
+  const lineItems = children.map((child, i) => {
+    const days = details[i] || []
+    return { child, days, subtotal: days.length * pricePerDay }
+  })
 
-  const grandTotal = lineItems.reduce((sum, li) => sum + (li.item?.total_price_hkd ?? 0), 0)
+  const grandTotal = lineItems.reduce((sum, li) => sum + li.subtotal, 0)
 
-  // Format month for display
   const monthName = month
     ? new Date(Number(month.split('-')[0]), Number(month.split('-')[1]) - 1).toLocaleDateString(
         'en-US',
@@ -79,7 +82,6 @@ function PaymentContent() {
     setError('')
 
     try {
-      // Send all children as an array to the checkout API
       const res = await fetch('/api/kpay/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -88,10 +90,16 @@ function PaymentContent() {
           parent_email: order.parentEmail,
           parent_phone: order.parentPhone,
           menu_month: month,
-          children: lineItems.map(li => ({
+          children: lineItems.map((li) => ({
             child_name: li.child.name,
             child_class: li.child.class,
-            menu_item_id: li.item!.item_id,
+            days: li.days.map((d) => ({
+              date: d.date,
+              item_id: d.item.item_id,
+              item_name: d.item.item_name,
+              emoji: d.item.emoji,
+              lane: d.item.lane,
+            })),
           })),
         }),
       })
@@ -104,10 +112,10 @@ function PaymentContent() {
         return
       }
 
-      // Store order IDs for confirmation page
-      sessionStorage.setItem('lunchflow_order_ids', JSON.stringify(data.order_ids ?? [data.order_id]))
-
-      // Redirect to KPay payment page
+      sessionStorage.setItem(
+        'lunchflow_order_ids',
+        JSON.stringify(data.order_ids ?? [data.order_id])
+      )
       window.location.href = data.payment_url
     } catch {
       setError('Something went wrong. Please try again.')
@@ -115,7 +123,7 @@ function PaymentContent() {
     }
   }
 
-  if (!order || lineItems.some(li => !li.item)) {
+  if (!order || lineItems.length === 0) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-zinc-50">
         <div className="text-zinc-500">Loading...</div>
@@ -134,6 +142,7 @@ function PaymentContent() {
           <h1 className="text-2xl font-bold text-zinc-900">Order Summary</h1>
           <p className="mt-1 text-sm text-zinc-500">
             {children.length} {children.length === 1 ? 'child' : 'children'} &middot; {monthName}
+            &middot; HKD {pricePerDay}/day
           </p>
         </div>
 
@@ -147,23 +156,34 @@ function PaymentContent() {
         <div className="mt-6 space-y-4">
           {lineItems.map((li, i) => (
             <div key={i} className="rounded-xl border border-zinc-200 bg-white p-5">
-              <div className="space-y-2 text-sm">
-                <div className="flex justify-between">
-                  <span className="font-semibold text-zinc-900">{li.child.name}</span>
-                  <span className="text-zinc-500">{li.child.class}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-zinc-500">
-                    {li.item!.emoji} {li.item!.item_name}
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-zinc-900">{li.child.name}</span>
+                <span className="text-sm text-zinc-500">{li.child.class}</span>
+              </div>
+              <div className="mt-2 text-sm text-zinc-500">
+                {li.days.length} days selected
+              </div>
+              <div className="mt-2 flex flex-wrap gap-1">
+                {li.days.slice(0, 8).map((d) => (
+                  <span
+                    key={d.date}
+                    className="inline-block rounded bg-zinc-100 px-2 py-0.5 text-xs text-zinc-600"
+                    title={`${d.date}: ${d.item.item_name}`}
+                  >
+                    {d.item.emoji} {new Date(d.date + 'T00:00:00').getDate()}
                   </span>
-                  <span className="text-zinc-700">
-                    {li.item!.days_in_month}d &times; ${li.item!.price_hkd}
+                ))}
+                {li.days.length > 8 && (
+                  <span className="inline-block rounded bg-zinc-100 px-2 py-0.5 text-xs text-zinc-400">
+                    +{li.days.length - 8} more
                   </span>
-                </div>
-                <div className="flex justify-between font-medium">
-                  <span className="text-zinc-500">Subtotal</span>
-                  <span className="text-zinc-900">HKD {li.item!.total_price_hkd}</span>
-                </div>
+                )}
+              </div>
+              <div className="mt-3 flex justify-between text-sm font-medium">
+                <span className="text-zinc-500">
+                  {li.days.length}d &times; HKD {pricePerDay}
+                </span>
+                <span className="text-zinc-900">HKD {li.subtotal}</span>
               </div>
             </div>
           ))}

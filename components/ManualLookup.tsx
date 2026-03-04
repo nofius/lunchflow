@@ -70,7 +70,7 @@ export default function ManualLookup({
       const res = await fetch('/api/collect', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ order_id: order.order_id, staff_id: staffId, manual: true }),
+        body: JSON.stringify({ order_id: order.order_id, date: new Date().toISOString().slice(0, 10), staff_id: staffId, manual: true }),
       })
       if (res.ok) {
         onCollected()
@@ -129,15 +129,11 @@ export default function ManualLookup({
 
         {order && (
           <div className="mt-4 rounded-xl border border-zinc-200 bg-zinc-50 p-4">
-            <p className="text-lg font-bold text-zinc-900">
-              {order.menu_item_emoji} {order.child_name}
-            </p>
+            <p className="text-lg font-bold text-zinc-900">{order.child_name}</p>
             <p className="text-sm text-zinc-500">
-              {order.child_class} &middot; {order.menu_item_name} &middot; Lane {order.lane}
+              {order.child_class} &middot; {order.days_ordered} days &middot; {order.menu_month}
             </p>
-            {order.collected ? (
-              <p className="mt-3 text-sm font-medium text-orange-600">Already collected</p>
-            ) : order.payment_status !== 'paid' ? (
+            {order.payment_status !== 'paid' ? (
               <p className="mt-3 text-sm font-medium text-red-600">Not paid</p>
             ) : (
               <button
@@ -146,7 +142,7 @@ export default function ManualLookup({
                 disabled={collecting}
                 className="mt-3 w-full rounded-lg bg-green-600 px-4 py-3 text-base font-semibold text-white transition-colors hover:bg-green-700 disabled:opacity-50"
               >
-                {collecting ? 'Marking...' : 'Mark as Collected'}
+                {collecting ? 'Marking...' : 'Mark as Collected (today)'}
               </button>
             )}
           </div>
