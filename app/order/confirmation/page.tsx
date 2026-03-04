@@ -6,19 +6,27 @@ import Link from 'next/link'
 import QRDisplay from '@/components/QRDisplay'
 import type { Order } from '@/types'
 
-function getInitialOrderId(): string | null {
-  if (typeof window === 'undefined') return null
-  return sessionStorage.getItem('lunchflow_order_id')
+function getInitialOrderIds(): string[] {
+  if (typeof window === 'undefined') return []
+  // Try new multi-child key first, then fall back to legacy single key
+  const multi = sessionStorage.getItem('lunchflow_order_ids')
+  if (multi) {
+    try { return JSON.parse(multi) } catch { /* ignore */ }
+  }
+  const single = sessionStorage.getItem('lunchflow_order_id')
+  return single ? [single] : []
 }
 
 function ConfirmationContent() {
   const searchParams = useSearchParams()
-  const [order, setOrder] = useState<Order | null>(null)
+  const [orders, setOrders] = useState<Order[]>([])
   const [pollCount, setPollCount] = useState(0)
+
+  // Resolve order IDs: URL param (single), or sessionStorage (multi)
   const urlOrderId = searchParams.get('order_id')
-  const [sessionOrderId] = useState(getInitialOrderId)
-  const resolvedId = urlOrderId || sessionOrderId
-  const hasId = !!resolvedId
+  const [sessionOrderIds] = useState(getInitialOrderIds)
+  const resolvedIds = urlOrderId ? [urlOrderId] : sessionOrderIds
+  const hasIds = resolvedIds.length > 0
   const [done, setDone] = useState(false)
   const pollingRef = useRef(false)
 
@@ -30,7 +38,7 @@ function ConfirmationContent() {
   }, [])
 
   useEffect(() => {
-    if (!resolvedId || pollingRef.current) return
+    if (!hasIds || pollingRef.current) return
     pollingRef.current = true
 
     let cancelled = false
@@ -43,15 +51,18 @@ function ConfirmationContent() {
       }
 
       try {
-        const fetched = await fetchOrder(resolvedId)
+        const fetched = await Promise.all(resolvedIds.map(id => fetchOrder(id)))
         if (cancelled) return
 
-        if (fetched && fetched.payment_status === 'paid') {
-          setOrder(fetched)
+        const paidOrders = fetched.filter((o): o is Order => o !== null && o.payment_status === 'paid')
+        if (paidOrders.length === resolvedIds.length) {
+          setOrders(paidOrders)
           setDone(true)
-          sessionStorage.removeItem('lunchflow_child_details')
-          sessionStorage.removeItem('lunchflow_selected_item')
+          // Clean up all session keys
+          sessionStorage.removeItem('lunchflow_order')
+          sessionStorage.removeItem('lunchflow_selections')
           sessionStorage.removeItem('lunchflow_month')
+          sessionStorage.removeItem('lunchflow_order_ids')
           sessionStorage.removeItem('lunchflow_order_id')
           return
         }
@@ -71,22 +82,25 @@ function ConfirmationContent() {
       cancelled = true
       clearTimeout(timeoutId)
     }
-  }, [resolvedId, fetchOrder])
+  }, [hasIds, resolvedIds, fetchOrder])
 
   // Format month for display
-  const monthName = order?.menu_month
+  const firstOrder = orders[0]
+  const monthName = firstOrder?.menu_month
     ? new Date(
-        Number(order.menu_month.split('-')[0]),
-        Number(order.menu_month.split('-')[1]) - 1
+        Number(firstOrder.menu_month.split('-')[0]),
+        Number(firstOrder.menu_month.split('-')[1]) - 1
       ).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
     : ''
 
-  // No order ID at all
-  if (!hasId) {
+  const grandTotal = orders.reduce((sum, o) => sum + o.amount_hkd, 0)
+
+  // No order IDs at all
+  if (!hasIds) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center bg-zinc-50 px-4">
         <div className="w-full max-w-md text-center">
-          <div className="text-4xl">⚠️</div>
+          <div className="text-4xl">&#9888;&#65039;</div>
           <h1 className="mt-4 text-xl font-bold text-zinc-900">No Order Found</h1>
           <p className="mt-2 text-sm text-zinc-500">
             We couldn&apos;t find an order to confirm.
@@ -114,12 +128,12 @@ function ConfirmationContent() {
     )
   }
 
-  // Polling done but no paid order
-  if (!order) {
+  // Polling done but not all paid
+  if (orders.length === 0) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center bg-zinc-50 px-4">
         <div className="w-full max-w-md text-center">
-          <div className="text-4xl">⚠️</div>
+          <div className="text-4xl">&#9888;&#65039;</div>
           <h1 className="mt-4 text-xl font-bold text-zinc-900">Payment Not Confirmed</h1>
           <p className="mt-2 text-sm text-zinc-500">
             We couldn&apos;t confirm your payment. If you completed the payment, your confirmation email
@@ -133,66 +147,79 @@ function ConfirmationContent() {
     )
   }
 
-  // Payment confirmed
+  // All orders confirmed
   return (
     <div className="flex min-h-screen flex-col items-center bg-zinc-50 px-4 py-8">
       <div className="w-full max-w-md">
         <div className="text-center">
           <div className="inline-flex h-16 w-16 items-center justify-center rounded-full bg-green-100 text-3xl">
-            ✅
+            &#10004;&#65039;
           </div>
-          <h1 className="mt-4 text-2xl font-bold text-zinc-900">Order Confirmed!</h1>
+          <h1 className="mt-4 text-2xl font-bold text-zinc-900">
+            {orders.length === 1 ? 'Order Confirmed!' : `${orders.length} Orders Confirmed!`}
+          </h1>
           <p className="mt-1 text-sm text-zinc-500">
             Lunch for {monthName} is all set.
+            {orders.length > 1 && ` Total: HKD ${grandTotal}`}
           </p>
         </div>
 
-        <div className="mt-6 rounded-xl border border-zinc-200 bg-white p-5">
-          <div className="space-y-3 text-sm">
-            <div className="flex justify-between">
-              <span className="text-zinc-500">Child</span>
-              <span className="font-medium text-zinc-900">{order.child_name}</span>
+        {/* Per-child confirmation cards */}
+        <div className="mt-6 space-y-6">
+          {orders.map(order => (
+            <div key={order.order_id}>
+              <div className="rounded-xl border border-zinc-200 bg-white p-5">
+                <div className="space-y-3 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-zinc-500">Child</span>
+                    <span className="font-medium text-zinc-900">{order.child_name}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-zinc-500">Class</span>
+                    <span className="font-medium text-zinc-900">{order.child_class}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-zinc-500">Meal</span>
+                    <span className="font-medium text-zinc-900">
+                      {order.menu_item_emoji} {order.menu_item_name}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-zinc-500">Amount</span>
+                    <span className="font-medium text-zinc-900">HKD {order.amount_hkd}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-zinc-500">Order ID</span>
+                    <span className="font-mono text-xs text-zinc-500">{order.order_id}</span>
+                  </div>
+                </div>
+              </div>
+
+              {order.qr_token && (
+                <div className="mt-4">
+                  <p className="text-center text-sm font-semibold text-zinc-900">
+                    QR Code for {order.child_name}
+                  </p>
+                  <p className="mt-0.5 text-center text-xs text-zinc-500">
+                    Show at the canteen each lunch day
+                  </p>
+                  <div className="mt-3">
+                    <QRDisplay
+                      token={order.qr_token}
+                      childName={order.child_name}
+                      menuMonth={order.menu_month}
+                    />
+                  </div>
+                </div>
+              )}
             </div>
-            <div className="flex justify-between">
-              <span className="text-zinc-500">Class</span>
-              <span className="font-medium text-zinc-900">{order.child_class}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-zinc-500">Meal</span>
-              <span className="font-medium text-zinc-900">
-                {order.menu_item_emoji} {order.menu_item_name}
-              </span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-zinc-500">Amount</span>
-              <span className="font-medium text-zinc-900">HKD {order.amount_hkd}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-zinc-500">Order ID</span>
-              <span className="font-mono text-xs text-zinc-500">{order.order_id}</span>
-            </div>
-          </div>
+          ))}
         </div>
 
-        {order.qr_token && (
-          <div className="mt-6">
-            <h2 className="text-center text-lg font-semibold text-zinc-900">Your QR Code</h2>
-            <p className="mt-1 text-center text-xs text-zinc-500">
-              Show this at the canteen each lunch day
-            </p>
-            <div className="mt-4">
-              <QRDisplay
-                token={order.qr_token}
-                childName={order.child_name}
-                menuMonth={order.menu_month}
-              />
-            </div>
-          </div>
-        )}
-
         <div className="mt-6 rounded-lg border border-blue-100 bg-blue-50 p-4 text-sm text-blue-800">
-          Your child should show this QR code at the canteen each lunch day. The same QR code is
-          valid for the entire month of {monthName}.
+          {orders.length === 1
+            ? `Your child should show their QR code at the canteen each lunch day. The same QR code is valid for the entire month of ${monthName}.`
+            : `Each child has their own QR code. They should show it at the canteen each lunch day. The codes are valid for the entire month of ${monthName}.`}
         </div>
 
         <div className="mt-6 text-center">
