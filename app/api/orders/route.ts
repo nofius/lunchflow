@@ -20,10 +20,11 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  // Lookup by child name + class + month (used for duplicate check)
-  const childName = searchParams.get('child_name')
-  const childClass = searchParams.get('child_class')
+  // Lookup by child name + class + month
+  const childName = searchParams.get('child_name') || searchParams.get('name')
+  const childClass = searchParams.get('child_class') || searchParams.get('class')
   const month = searchParams.get('month') || getCurrentOrderingMonth()
+  const detail = searchParams.has('name') // manual lookup wants the full order
 
   if (!childName || !childClass) {
     return NextResponse.json(
@@ -34,6 +35,12 @@ export async function GET(request: NextRequest) {
 
   try {
     const existingOrder = await getOrderByChild(childName, childClass, month)
+    if (detail) {
+      if (!existingOrder) {
+        return NextResponse.json({ error: 'Order not found' }, { status: 404 })
+      }
+      return NextResponse.json({ order: existingOrder })
+    }
     return NextResponse.json({ exists: !!existingOrder })
   } catch (error) {
     console.error('Failed to check order:', error)
